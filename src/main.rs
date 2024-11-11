@@ -17,6 +17,7 @@ struct EndCentralDirectory {
     total_entries: u16,
     dir_size: u32,
     dir_offset: u32,
+    comment_len: u16,
 }
 fn main() {
     let res = read_end_central_dir("/home/abc/Desktop/example.zip");
@@ -52,7 +53,7 @@ fn read_end_central_dir(path: &str) -> io::Result<Option<u64>> {
         -(-(search_size as i64) + signature_position + 4 as i64),
     ))?; // 4 for skipping the signature itself
 
-    let mut record = [0u8; 16];
+    let mut record = [0u8; 18];
     f.read_exact(&mut record)?;
 
     let end_central_dir = EndCentralDirectory {
@@ -62,6 +63,7 @@ fn read_end_central_dir(path: &str) -> io::Result<Option<u64>> {
         total_entries: u16::from_le_bytes(record[6..8].try_into().unwrap()),
         dir_size: u32::from_le_bytes(record[8..12].try_into().unwrap()),
         dir_offset: u32::from_le_bytes(record[12..16].try_into().unwrap()),
+        comment_len: u16::from_le_bytes(record[16..18].try_into().unwrap()),
     };
     Ok(Some(end_central_dir.dir_offset as u64))
 }
