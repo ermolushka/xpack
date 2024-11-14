@@ -1,16 +1,15 @@
+use flate2::read::DeflateDecoder;
 use std::fs;
+use std::io::Write;
 use std::io::{self, SeekFrom};
 use std::iter::Zip;
+use std::path::Path;
 use std::{
     cmp::min,
     fs::File,
     io::{Read, Seek},
     os::unix::fs::FileExt,
 };
-use flate2::read::DeflateDecoder;
-use std::io::Write;
-use std::path::Path;
-
 
 const LOCAL_FILE_HEADER_SIGNATURE: i32 = 0x04034b50;
 const CENTRAL_DIR_SIGNATURE: i32 = 0x02014b50;
@@ -35,12 +34,15 @@ struct ZipFileEntry {
     file_offset: u32,
 }
 fn main() {
-    let res = read_end_central_dir("/home/abc/Desktop/example.zip");
+    let archive_name = "";
+    let path_to_unpack = "";
+    let res = read_end_central_dir(archive_name);
     // println!("{:?}", res.unwrap());
-    let entries = read_central_directory("/home/abc/Desktop/example.zip", res.unwrap()).unwrap();
-    if let Some(entry) = entries.unwrap().get(0) {
-        extract_file("/home/abc/Desktop/example.zip", entry);
-
+    let entries = read_central_directory(archive_name, res.unwrap()).unwrap();
+    if let Some(entries_vec) = &entries {
+        for item in entries_vec {
+            extract_file(archive_name, item, path_to_unpack);
+        }
     }
 }
 
@@ -101,7 +103,10 @@ fn read_end_central_dir(path: &str) -> io::Result<Option<u64>> {
 
     Ok(Some(end_central_dir.dir_offset as u64))
 }
-fn read_central_directory(path: &str, offset: Option<u64>) -> io::Result<Option<Vec<ZipFileEntry>>> {
+fn read_central_directory(
+    path: &str,
+    offset: Option<u64>,
+) -> io::Result<Option<Vec<ZipFileEntry>>> {
     // Central Directory Header:
     // [4 bytes]  Signature
     // [2 bytes]  Version made by
@@ -124,104 +129,89 @@ fn read_central_directory(path: &str, offset: Option<u64>) -> io::Result<Option<
     // [variable] Extra field
     // [variable] File comment
     let mut f: File = File::open(path)?;
-    eprintln!("read_central_directory at offset: {}", offset.unwrap());
-
-    // Read signature
-    f.seek(SeekFrom::Start(offset.unwrap()))?;
-    let mut buf = [0u8; 4];
-    f.read_exact(&mut buf)?;
-    if buf != CENTRAL_DIR_SIGNATURE.to_le_bytes() {
-        eprintln!("No match on first read at offset {}", offset.unwrap());
-        eprintln!(
-            "Found {:02X?}, expected {:02X?}",
-            buf,
-            CENTRAL_DIR_SIGNATURE.to_le_bytes()
-        );
-        return Ok(None);
-    }
-    eprintln!("Found central directory signature!");
-
-    // Skip version made by (2), version needed (2), flags (2)
-    f.seek(SeekFrom::Current(6))?;
-
-    // Read compression method
-    let mut compression_method_buf = [0u8; 2];
-    f.read_exact(&mut compression_method_buf)?;
-    let compression_method = u16::from_le_bytes(compression_method_buf);
-    eprintln!(
-        "compression_method: {} (0x{:04X})",
-        compression_method, compression_method
-    );
-
-    // Skip last mod time (2), last mod date (2), CRC32 (4)
-    f.seek(SeekFrom::Current(8))?;
-
-    // Read compressed and uncompressed sizes
-    let mut compressions_buf = [0u8; 8];
-    f.read_exact(&mut compressions_buf)?;
-    let compressed_size = u32::from_le_bytes(compressions_buf[0..4].try_into().unwrap());
-    let uncompressed_size = u32::from_le_bytes(compressions_buf[4..8].try_into().unwrap());
-    eprintln!(
-        "compressed {} uncompressed {}",
-        compressed_size, uncompressed_size
-    );
-
-    // Read filename length, extra field length, comment length
-    let mut lengths_buf = [0u8; 6];
-    f.read_exact(&mut lengths_buf)?;
-    let filename_length = u16::from_le_bytes(lengths_buf[0..2].try_into().unwrap());
-    let extra_length = u16::from_le_bytes(lengths_buf[2..4].try_into().unwrap());
-    let comment_length = u16::from_le_bytes(lengths_buf[4..6].try_into().unwrap());
-    eprintln!(
-        "filename_length {} extra_length {} comment_length {}",
-        filename_length, extra_length, comment_length
-    );
-
-    // Skip disk number start (2), internal attrs (2), external attrs (4)
-    f.seek(SeekFrom::Current(8))?;
-
-    // Read local header offset
-    let mut offset_buf = [0u8; 4];
-    f.read_exact(&mut offset_buf)?;
-    let file_offset = u32::from_le_bytes(offset_buf);
-    eprintln!("file_offset: {}", file_offset);
-
-    // Read filename
-    let mut filename_buf = vec![0u8; filename_length as usize];
-    f.read_exact(&mut filename_buf)?;
-    let filename = String::from_utf8(filename_buf)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    eprintln!("filename: {}", filename);
-
     let mut file_entries: Vec<ZipFileEntry> = vec![];
+    let mut current_offset = offset.unwrap();
 
-    file_entries.push(ZipFileEntry {
-        filename: filename,
-        compressed_size: compressed_size,
-        uncompressed_size: uncompressed_size,
-        compression_method: compression_method,
-        file_offset: file_offset,
-    });
+    loop {
+        f.seek(SeekFrom::Start(current_offset))?;
 
+        // Read signature
+        let mut buf = [0u8; 4];
+        match f.read_exact(&mut buf) {
+            Ok(_) => {
+                if buf != CENTRAL_DIR_SIGNATURE.to_le_bytes() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+
+        // Skip version made by (2), version needed (2), flags (2)
+        f.seek(SeekFrom::Current(6))?;
+
+        // Read compression method
+        let mut compression_method_buf = [0u8; 2];
+        f.read_exact(&mut compression_method_buf)?;
+        let compression_method = u16::from_le_bytes(compression_method_buf);
+
+        // Skip last mod time (2), last mod date (2), CRC32 (4)
+        f.seek(SeekFrom::Current(8))?;
+
+        // Read sizes
+        let mut compressions_buf = [0u8; 8];
+        f.read_exact(&mut compressions_buf)?;
+        let compressed_size = u32::from_le_bytes(compressions_buf[0..4].try_into().unwrap());
+        let uncompressed_size = u32::from_le_bytes(compressions_buf[4..8].try_into().unwrap());
+
+        // Read lengths
+        let mut lengths_buf = [0u8; 6];
+        f.read_exact(&mut lengths_buf)?;
+        let filename_length = u16::from_le_bytes(lengths_buf[0..2].try_into().unwrap());
+        let extra_length = u16::from_le_bytes(lengths_buf[2..4].try_into().unwrap());
+        let comment_length = u16::from_le_bytes(lengths_buf[4..6].try_into().unwrap());
+
+        // Skip to local header offset
+        f.seek(SeekFrom::Current(8))?;
+
+        // Read local header offset
+        let mut offset_buf = [0u8; 4];
+        f.read_exact(&mut offset_buf)?;
+        let file_offset = u32::from_le_bytes(offset_buf);
+
+        // Read filename
+        let mut filename_buf = vec![0u8; filename_length as usize];
+        f.read_exact(&mut filename_buf)?;
+        let filename = String::from_utf8(filename_buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        file_entries.push(ZipFileEntry {
+            filename,
+            compressed_size,
+            uncompressed_size,
+            compression_method,
+            file_offset,
+        });
+        // Skip extra field and comment
+        f.seek(SeekFrom::Current((extra_length + comment_length) as i64))?;
+        current_offset = f.stream_position()?;
+    }
     eprintln!("file_entries: {:?}", file_entries);
-
-    // Skip extra field
-    f.seek(SeekFrom::Current(extra_length as i64))?;
-
-    // Skip comment
-    f.seek(SeekFrom::Current(comment_length as i64))?;
 
     Ok(Some(file_entries))
 }
 
-fn extract_file(path: &str, entry: &ZipFileEntry)-> io::Result<Option<Vec<u8>>> {
+fn extract_file(
+    path: &str,
+    entry: &ZipFileEntry,
+    path_to_unpack: &str,
+) -> io::Result<Option<Vec<u8>>> {
     eprintln!("Starting extract_file with:");
     eprintln!("  filename: {}", entry.filename);
     eprintln!("  file_offset: {}", entry.file_offset);
     eprintln!("  compressed_size: {}", entry.compressed_size);
     eprintln!("  uncompressed_size: {}", entry.uncompressed_size);
     eprintln!("  compression_method: {}", entry.compression_method);
-    
+
     let mut f: File = File::open(path)?;
     f.seek(SeekFrom::Start(entry.file_offset as u64))?;
 
@@ -229,7 +219,7 @@ fn extract_file(path: &str, entry: &ZipFileEntry)-> io::Result<Option<Vec<u8>>> 
     let mut local_header = [0u8; 30];
     f.read_exact(&mut local_header)?;
     eprintln!("Local header: {:02X?}", local_header);
-    
+
     // Check signature
     if local_header[0..4] != LOCAL_FILE_HEADER_SIGNATURE.to_le_bytes() {
         eprintln!("Invalid local file header signature");
@@ -242,56 +232,71 @@ fn extract_file(path: &str, entry: &ZipFileEntry)-> io::Result<Option<Vec<u8>>> 
     eprintln!("Local header extra length: {}", local_extra_length);
 
     // Skip variable length fields
-    f.seek(SeekFrom::Current((local_name_length + local_extra_length) as i64))?;
+    f.seek(SeekFrom::Current(
+        (local_name_length + local_extra_length) as i64,
+    ))?;
 
     // Read compressed data
     let mut compressed_data_buf = vec![0u8; entry.compressed_size as usize];
     f.read_exact(&mut compressed_data_buf)?;
-    eprintln!("Read {} bytes of compressed data", compressed_data_buf.len());
+    eprintln!(
+        "Read {} bytes of compressed data",
+        compressed_data_buf.len()
+    );
 
     match entry.compression_method {
         0 => {
             eprintln!("No compression, returning raw data");
             Ok(Some(compressed_data_buf))
-        },
+        }
         8 => {
             eprintln!("Using Deflate decompression");
             eprintln!("Compressed size: {}", compressed_data_buf.len());
-            eprintln!("First few bytes: {:02X?}", &compressed_data_buf[..16.min(compressed_data_buf.len())]);
+            eprintln!(
+                "First few bytes: {:02X?}",
+                &compressed_data_buf[..16.min(compressed_data_buf.len())]
+            );
 
             use flate2::read::DeflateDecoder;
             use std::io::Read;
 
             let mut decoder = DeflateDecoder::new(&compressed_data_buf[..]);
             let mut decompressed_data = Vec::with_capacity(entry.uncompressed_size as usize);
-            
+
             match decoder.read_to_end(&mut decompressed_data) {
                 Ok(size) => {
                     eprintln!("Successfully decompressed {} bytes", size);
                     if size != entry.uncompressed_size as usize {
-                        eprintln!("Warning: Decompressed size {} differs from expected {}", 
-                                size, entry.uncompressed_size);
+                        eprintln!(
+                            "Warning: Decompressed size {} differs from expected {}",
+                            size, entry.uncompressed_size
+                        );
                     }
-                    eprintln!("First few bytes of decompressed data: {:02X?}", 
-                            &decompressed_data[..16.min(decompressed_data.len())]);
-                    let path = Path::new("/home/abc/Desktop/vscode2.txt");
+                    eprintln!(
+                        "First few bytes of decompressed data: {:02X?}",
+                        &decompressed_data[..16.min(decompressed_data.len())]
+                    );
+                    let full_path = format!("{}{}", path_to_unpack, entry.filename);
+                    let path = Path::new(&full_path);
                     let mut file = File::create(path)?;
                     file.write_all(&decompressed_data)?;
                     file.flush()?;
 
                     Ok(Some(decompressed_data))
-                },
+                }
                 Err(e) => {
                     eprintln!("Decompression error: {}", e);
                     eprintln!("Full compressed data: {:02X?}", compressed_data_buf);
                     Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
                 }
             }
-        },
+        }
         _ => {
-            eprintln!("Unsupported compression method: {}", entry.compression_method);
+            eprintln!(
+                "Unsupported compression method: {}",
+                entry.compression_method
+            );
             Ok(None)
         }
     }
 }
-
