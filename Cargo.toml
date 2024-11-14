@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 
 flate2 = "1.0"
+clap = { version = "4.4", features = ["derive"] }

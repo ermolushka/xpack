@@ -1,3 +1,4 @@
+use clap::Parser;
 use std::io::Write;
 use std::io::{self, SeekFrom};
 use std::path::Path;
@@ -6,6 +7,16 @@ use std::{
     fs::File,
     io::{Read, Seek},
 };
+
+#[derive(Parser)]
+#[command(author, version, about)]
+struct Args {
+    #[arg(short, long)]
+    archive_path: String,
+
+    #[arg(short, long)]
+    path_to_unpack: String,
+}
 
 const LOCAL_FILE_HEADER_SIGNATURE: i32 = 0x04034b50;
 const CENTRAL_DIR_SIGNATURE: i32 = 0x02014b50;
@@ -30,14 +41,15 @@ struct ZipFileEntry {
     file_offset: u32,
 }
 fn main() {
-    let archive_name: &str = "";
-    let path_to_unpack: &str = "";
-    let res: Result<Option<u64>, io::Error> = read_end_central_dir(archive_name);
+    let args = Args::parse();
+    let archive_path: &str = &args.archive_path;
+    let path_to_unpack: &str = &args.path_to_unpack;
+    let res: Result<Option<u64>, io::Error> = read_end_central_dir(archive_path);
     let entries: Option<Vec<ZipFileEntry>> =
-        read_central_directory(archive_name, res.unwrap()).unwrap();
+        read_central_directory(archive_path, res.unwrap()).unwrap();
     if let Some(entries_vec) = &entries {
         for item in entries_vec {
-            extract_file(archive_name, item, path_to_unpack);
+            extract_file(archive_path, item, path_to_unpack);
         }
     }
 }
