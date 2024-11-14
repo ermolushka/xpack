@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::fs;
 use std::io::Write;
 use std::io::{self, SeekFrom};
 use std::path::Path;
@@ -43,13 +44,16 @@ struct ZipFileEntry {
 fn main() {
     let args = Args::parse();
     let archive_path: &str = &args.archive_path;
-    let path_to_unpack: &str = &args.path_to_unpack;
+    let mut path_to_unpack: String = args.path_to_unpack;
+    if !path_to_unpack.ends_with("/") {
+        path_to_unpack.push_str("/");
+    }
     let res: Result<Option<u64>, io::Error> = read_end_central_dir(archive_path);
     let entries: Option<Vec<ZipFileEntry>> =
         read_central_directory(archive_path, res.unwrap()).unwrap();
     if let Some(entries_vec) = &entries {
         for item in entries_vec {
-            extract_file(archive_path, item, path_to_unpack);
+            extract_file(archive_path, item, path_to_unpack.as_str());
         }
     }
 }
@@ -266,15 +270,28 @@ fn extract_file(
                             size, entry.uncompressed_size
                         );
                     }
+                    let folder_path: &Path = Path::new(&path_to_unpack);
                     let full_path: String = format!("{}{}", path_to_unpack, entry.filename);
                     let path: &Path = Path::new(&full_path);
-                    let mut file: File = File::create(path)?;
-                    file.write_all(&decompressed_data)?;
-                    file.flush()?;
 
-                    eprintln!("Successfully saved file to {}", full_path);
+                    match folder_path.exists() {
+                        true => {
+                            let mut file: File = File::create(path)?;
+                            file.write_all(&decompressed_data)?;
+                            file.flush()?;
 
-                    Ok(Some(decompressed_data))
+                            eprintln!("Successfully saved file to {}", full_path);
+
+                            return Ok(Some(decompressed_data));
+                        }
+                        false => {
+                            eprintln!("FAIL: Output path doesnt exist: {:?}", path_to_unpack);
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Output path doesnt exist",
+                            ));
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("Decompression error: {}", e);
