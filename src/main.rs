@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::fs;
 use std::io::Write;
 use std::io::{self, SeekFrom};
 use std::path::Path;
@@ -24,13 +23,7 @@ const CENTRAL_DIR_SIGNATURE: i32 = 0x02014b50;
 const END_CENTRAL_DIR_SIGNATURE: i32 = 0x06054b50;
 
 struct EndCentralDirectory {
-    disk_num: u16,
-    start_disk: u16,
-    disk_entries: u16,
-    total_entries: u16,
-    dir_size: u32,
     dir_offset: u32,
-    comment_len: u16,
 }
 
 #[derive(Debug)]
@@ -102,13 +95,7 @@ fn read_end_central_dir(path: &str) -> io::Result<Option<u64>> {
     let record_bytes: &[u8] = &buf[pos + 4..pos + 22]; // 18 bytes after signature
 
     let end_central_dir: EndCentralDirectory = EndCentralDirectory {
-        disk_num: u16::from_le_bytes(record_bytes[0..2].try_into().unwrap()),
-        start_disk: u16::from_le_bytes(record_bytes[2..4].try_into().unwrap()),
-        disk_entries: u16::from_le_bytes(record_bytes[4..6].try_into().unwrap()),
-        total_entries: u16::from_le_bytes(record_bytes[6..8].try_into().unwrap()),
-        dir_size: u32::from_le_bytes(record_bytes[8..12].try_into().unwrap()),
         dir_offset: u32::from_le_bytes(record_bytes[12..16].try_into().unwrap()),
-        comment_len: u16::from_le_bytes(record_bytes[16..18].try_into().unwrap()),
     };
 
     Ok(Some(end_central_dir.dir_offset as u64))
@@ -310,29 +297,30 @@ fn extract_file(
     }
 }
 
-fn read_file_contents<P: AsRef<Path>>(path: P) -> io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    Ok(contents)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::path::PathBuf;
+    use std::{fs, path::PathBuf};
 
-    fn get_test_file_path(filename: &str) -> PathBuf {
+    fn read_file_contents<P: AsRef<Path>>(path: P) -> io::Result<String> {
+        let mut file = File::open(path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        Ok(contents)
+    }
+
+    fn get_test_file_path(filename: &str, only_folder: bool) -> PathBuf {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("test_files");
-        path.push(filename);
+        path.push("test_files/");
+        if !only_folder {
+            path.push(filename);
+        };
         path
     }
 
     #[test]
     fn test_archive_multiple_files() -> io::Result<()> {
-        let test_path = get_test_file_path("test_multiple.zip");
+        let test_path = get_test_file_path("test_multiple.zip", false);
         let res: Result<Option<u64>, io::Error> = read_end_central_dir(test_path.to_str().unwrap());
         let entries: Option<Vec<ZipFileEntry>> =
             read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
@@ -347,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_archive_single_file() -> io::Result<()> {
-        let test_path = get_test_file_path("test_single.zip");
+        let test_path = get_test_file_path("test_single.zip", false);
         let res: Result<Option<u64>, io::Error> = read_end_central_dir(test_path.to_str().unwrap());
         let entries: Option<Vec<ZipFileEntry>> =
             read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
@@ -355,7 +343,43 @@ mod tests {
             assert_eq!(entries_vec.len(), 1);
             assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
         }
-
+        // fs::remove_file(test_path)?;  // Cleanup
         Ok(())
+    }
+
+    #[test]
+    fn test_e2e_single_file() -> io::Result<()> {
+        let test_path = get_test_file_path("test_single.zip", false);
+        let test_path_only = get_test_file_path("test_single.zip", true);
+        let res: Result<Option<u64>, io::Error> = read_end_central_dir(test_path.to_str().unwrap());
+        let entries: Option<Vec<ZipFileEntry>> =
+            read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
+        if let Some(entries_vec) = &entries {
+            assert_eq!(entries_vec.len(), 1);
+            assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
+            for item in entries_vec {
+                extract_file(
+                    test_path.to_str().unwrap(),
+                    item,
+                    test_path_only.to_str().unwrap(),
+                );
+            }
+        }
+        let files_in_folder: Vec<String> = fs::read_dir(&test_path_only)?
+            .filter_map(|f| Some(f.ok()?.file_name().to_str()?.to_owned()))
+            .collect();
+
+        assert_eq!(files_in_folder.last().unwrap(), "test1.txt");
+        let unarchived_file_path = Path::new(files_in_folder.last().unwrap());
+        fs::remove_file(Path::new(&test_path_only.join(unarchived_file_path)))?; // Cleanup
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "No such file or directory")]
+    fn test_non_existent_archive() {
+        let test_path = get_test_file_path("non_existent.zip", false);
+        let res: Result<Option<u64>, io::Error> = read_end_central_dir(test_path.to_str().unwrap());
+        read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
     }
 }
