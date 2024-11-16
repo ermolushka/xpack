@@ -309,3 +309,53 @@ fn extract_file(
         }
     }
 }
+
+fn read_file_contents<P: AsRef<Path>>(path: P) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn get_test_file_path(filename: &str) -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("test_files");
+        path.push(filename);
+        path
+    }
+
+    #[test]
+    fn test_archive_multiple_files() -> io::Result<()> {
+        let test_path = get_test_file_path("test_multiple.zip");
+        let res: Result<Option<u64>, io::Error> = read_end_central_dir(test_path.to_str().unwrap());
+        let entries: Option<Vec<ZipFileEntry>> =
+            read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
+        if let Some(entries_vec) = &entries {
+            assert_eq!(entries_vec.len(), 2);
+            assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
+            assert_eq!(entries_vec.get(1).unwrap().filename, "test2.txt");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_archive_single_file() -> io::Result<()> {
+        let test_path = get_test_file_path("test_single.zip");
+        let res: Result<Option<u64>, io::Error> = read_end_central_dir(test_path.to_str().unwrap());
+        let entries: Option<Vec<ZipFileEntry>> =
+            read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
+        if let Some(entries_vec) = &entries {
+            assert_eq!(entries_vec.len(), 1);
+            assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
+        }
+
+        Ok(())
+    }
+}
