@@ -39,7 +39,7 @@ fn main() {
     let archive_path: &str = &args.archive_path;
     let mut path_to_unpack: String = args.path_to_unpack;
     if !path_to_unpack.ends_with("/") {
-        path_to_unpack.push_str("/");
+        path_to_unpack.push('/');
     }
     let res: Result<Option<u64>, io::Error> = read_end_central_dir(archive_path);
     let entries: Option<Vec<ZipFileEntry>> =
@@ -269,14 +269,14 @@ fn extract_file(
 
                             eprintln!("Successfully saved file to {}", full_path);
 
-                            return Ok(Some(decompressed_data));
+                            Ok(Some(decompressed_data))
                         }
                         false => {
                             eprintln!("FAIL: Output path doesnt exist: {:?}", path_to_unpack);
-                            return Err(std::io::Error::new(
+                            Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 "Output path doesnt exist",
-                            ));
+                            ))
                         }
                     }
                 }
@@ -326,8 +326,8 @@ mod tests {
             read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
         if let Some(entries_vec) = &entries {
             assert_eq!(entries_vec.len(), 2);
-            assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
-            assert_eq!(entries_vec.get(1).unwrap().filename, "test2.txt");
+            assert_eq!(entries_vec.first().unwrap().filename, "test1.txt");
+            assert_eq!(entries_vec.last().unwrap().filename, "test2.txt");
         }
 
         Ok(())
@@ -341,7 +341,7 @@ mod tests {
             read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
         if let Some(entries_vec) = &entries {
             assert_eq!(entries_vec.len(), 1);
-            assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
+            assert_eq!(entries_vec.first().unwrap().filename, "test1.txt");
         }
         // fs::remove_file(test_path)?;  // Cleanup
         Ok(())
@@ -356,7 +356,7 @@ mod tests {
             read_central_directory(test_path.to_str().unwrap(), res.unwrap()).unwrap();
         if let Some(entries_vec) = &entries {
             assert_eq!(entries_vec.len(), 1);
-            assert_eq!(entries_vec.get(0).unwrap().filename, "test1.txt");
+            assert_eq!(entries_vec.first().unwrap().filename, "test1.txt");
             for item in entries_vec {
                 extract_file(
                     test_path.to_str().unwrap(),
